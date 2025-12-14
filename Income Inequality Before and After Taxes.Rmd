@@ -1,0 +1,201 @@
+---
+title: "Income Inequality Before and After Taxes"
+author: "Dorottya Zorka Csala"
+date: "2025-12-10"
+output: html_document
+toc: TRUE
+---
+
+```{r setup}
+library(tidyverse)
+knitr::opts_chunk$set(echo = TRUE)
+
+theme_set(theme_light())
+```
+
+
+# Scraping data
+```{r}
+income_inequality <- read_csv( "https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-08-05/income_inequality_processed.csv")
+
+print(income_inequality)
+```
+
+# Conducting exploratory data analysis: obtaining a basic summary of each variable and inspecting whether there are missing values
+```{r}
+glimpse(income_inequality)
+summary(income_inequality)
+colSums(is.na(income_inequality))
+```
+# Creating reproducible plots
+## Comparing distribution between Gini coefficient before and after tax
+```{r}
+income_inequality %>%
+  pivot_longer(cols= c(gini_mi_eq, gini_dhi_eq), names_to= "type", values_to = "gini") %>% 
+   mutate(                               #I added this row, so in my plots the before tax condition will be the first and then the after tax condition. It helps understanding trends observed in the data more.
+    type = factor(
+      type,
+      levels = c("gini_mi_eq", "gini_dhi_eq"),
+      labels = c("Before tax (market income)", "After tax (disposable income)"))) %>%
+    ggplot(aes(gini, fill= type)) + geom_histogram(bins= 30) +  facet_wrap(~ type, scales = "free_x") +
+    labs(
+    title = "Gini coefficients distribution before and after tax",
+    x = "Gini index",
+    y = "Frequency")
+```
+
+### Based on the histograms, Gini coefficient before tax is centered around 0.45-0.5, while Gini coefficient after tax is around 0.3-0.35, which is lower compared to the before tax condition. This shows that inequality reduces after tax. However, there are values that still remain high after taxes, which might stem from the country's specific traits.
+
+## Second research question I intend to find answer for is whether inequality both in before and after tax condition has decreased or increased overall throughout time.
+```{r}
+income_inequality_cleaned <- income_inequality %>% 
+  group_by(Year) %>%
+  summarise(
+    before_tax = mean(gini_mi_eq, na.rm = TRUE),
+    after_tax  = mean(gini_dhi_eq, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(                                    #From wide-format to long-format.
+    cols = c(before_tax, after_tax),
+    names_to = "type",
+    values_to = "value"
+  ) %>%
+  mutate(                                           #I centered the year variable so it will be more interpretable.
+    Year_c = Year - mean(Year, na.rm = TRUE),
+    type = factor(
+      type,
+      levels = c("before_tax", "after_tax"),
+      labels = c("Before tax (market income)", "After tax (disposable income)")
+    )
+  )
+
+ggplot(income_inequality_cleaned, aes(x = Year_c, y = value, color = type)) +
+  geom_line(linewidth = 1.2) +
+  geom_smooth(method = "loess", se = FALSE, linetype = "dashed") +      #I added geom_smooth() so the overall trend could be better interpreted.
+  labs(
+    title = "Average inequality in long-term",
+    y = "Average Gini",
+    x = "Year",
+    color = "Type"
+  )
+```
+
+### In both conditions we could observe increase, though, the inequality before tax is still higher as opposed to the inequality after tax.
+
+## My aim is to observe inequality trends for Belgium, Germany and United Kingdom both before tax and after tax condition.
+```{r}
+income_inequality_cleaned_2 <- income_inequality %>%
+  pivot_longer(
+    cols = c(gini_mi_eq, gini_dhi_eq),
+    names_to = "type",
+    values_to = "gini"
+  ) %>%
+  mutate(
+    type = factor(
+      type,
+      levels = c("gini_mi_eq", "gini_dhi_eq"),
+      labels = c("Before tax (market income)", "After tax (disposable income)")
+    )
+  )
+
+countries <- c("Belgium", "Germany", "United Kingdom") 
+
+income_inequality_cleaned_2 %>% filter(type == "Before tax (market income)", Entity %in% countries) %>%
+  ggplot(aes(x = Year, y = gini, color = Entity)) +
+  geom_line(alpha = 0.7) +
+  labs(
+    title = "Before tax inequality for Belgium, Germany and United Kingdom",
+    y = "Gini coefficient",
+    x = "Year",
+    color = "Country"
+  ) +
+  theme_minimal()
+
+income_inequality_cleaned_2 %>%  filter(type == "After tax (disposable income)", Entity %in% countries) %>%
+  ggplot(aes(x = Year, y = gini, color = Entity)) +
+  geom_line(alpha = 0.7) +
+  labs(
+    title = "After-tax inequality for Belgium, Germany and United Kingdom",
+    y = "Gini coefficient",
+    x = "Year",
+    color = "Country"
+  ) +
+  theme_minimal()
+```
+
+### Based on the plots, we can conclude that there were missing data in our dataset, as we did not get a continuous line. Neither Germany nor Belgium have early inequality data as opposed to United Kingdom. 
+
+# My hypothesis is that year can predict Gini coefficient before tax. To investigate my hypothesis, I am going to build a linear model.
+```{r}
+library(sjPlot)
+library(performance)
+library(see)
+
+income_inequality <- income_inequality %>%
+  mutate(Year_c = Year - mean(Year, na.rm = TRUE))
+
+lm_before <- lm(gini_mi_eq ~ Year_c, data = income_inequality)
+summary(lm_before)
+tab_model(lm_before)
+check_model(lm_before)
+```
+
+## The results showed that the intercept is significantly different from zero. The estimate of Year was also significant with a value of zero which detects a consistent trend across years, though, it is very small. The value of adjusted R2 is 0.12, which shows that the model explains only 12.2% variance in gini_mi_eq.
+
+### I could observe mild deviation,especially on the right tail of the plot, though it is not severe, so the assumption of linearity is met.
+
+### The homogeneity of variance plot shows mild heteroscedasticity, though, I could not observe a specific, e.g., funnel-shape.
+
+### Regarding influential cases, there are some outliers, such as points 378, 380, 381.
+
+### Based on the last plot, I can observe a heavy-tail on the right end, so it suggests that the residuals are not perfectly normally distributed.
+
+
+# For the next model, I will add Entity as predictor as well to my previous model and see if it improves prediction.
+```{r}
+library(sjPlot)
+library(performance)
+library(see)
+
+lm_before_and_country <- lm(gini_mi_eq ~ Year_c + Entity, data = income_inequality)
+summary(lm_before_and_country)
+tab_model(lm_before_and_country)
+check_model(lm_before_and_country)
+```
+
+## The model results showed again that Year predicts a significant trend over time, though it is very small. For each country in the dataset we could observe whether the coefficient was different from the baseline country. Some countries showed significant difference from baseline country (e.g., Brazil, Canada, Dominican Republic, Germany etc.), whereas others did not differ significantly (e.g., Romania, United Kingdom, Israel etc.). The adjusted R2 was 0.85, which means that country explains 85% of variance in gini_mi_eq.
+
+### The scatter plot of residuals appears to be relatively flat and centered around zero, so the assumption of linearity is met.
+
+### The homogeneity of variance plot shows mild heteroscedasticity, though, I could not observe a specific, e.g., funnel-shape.
+
+### Based on the plot, there are some influential cases that have high residuals, such as points 381, 424.
+
+### Based on the VIF values, predictors are not highly correlated.
+
+### The normality of residuals is met.
+
+# Now I will compare the two models I built.
+```{r}
+anova(lm_before, lm_before_and_country)
+```
+## Adding Entity to our model significantly improves the second model.
+
+# Now I will build the same models for after tax condition and also compare them.
+```{r}
+lm_after <- lm(gini_dhi_eq ~ Year_c, data = income_inequality)
+summary(lm_after)
+tab_model(lm_after)
+check_model(lm_after)
+
+lm_after_and_country <- lm(gini_dhi_eq ~ Year_c + Entity, data = income_inequality)
+summary(lm_after_and_country)
+tab_model(lm_after_and_country)
+check_model(lm_after_and_country)
+
+anova(lm_after_and_country)
+```
+
+## For the after tax condition, I can conclude the same results: year has a significant, but small effect. Adding countries (Entity variable) to the model improves the model. The adjusted R2 is 0.92, which shows that the second model containing year and countries explains 92% of variance in gini_dhi_eq.
+
+### However, the assumption checks are not perfectly met in either of the model: in both models, residuals are not linearly distributed and I could observe heteroscedasticity as well. There are influential cases as well in the dataset. Furthermore, the normality of residuals in the first model is not met as it has heavy tails both on the right and left ends, but the normality of residuals is met in the second model.
